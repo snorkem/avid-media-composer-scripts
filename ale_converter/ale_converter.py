@@ -124,6 +124,55 @@ class ALEConverter:
                 value = self.df_ale.iloc[0][col]
                 self.debug_print(f"  {col}: {value}")
 
+    def get_original_ale_metadata(self):
+        """Extract all metadata from the original ALE file"""
+        print("Extracting original ALE metadata")
+        
+        with open(self.ale_path, 'r') as f:
+            self.ale_old_read = f.read()
+        
+        # Handle case where heading items are all on one line
+        if "HeadingFIELD_DELIM" in self.ale_old_read:
+            # Parse the header line by adding newlines where needed
+            header_line = self.ale_old_read.split("Column")[0].strip()
+            
+            # Extract the FPS value
+            fps_match = re.search(r'FPS\s+(\d+\.\d+)', header_line)
+            fps = fps_match.group(1) if fps_match else "23.976"
+            
+            # Create properly formatted header
+            self.header_section = (
+                "Heading\n"
+                "FIELD_DELIM\tTABS\n"
+                "VIDEO_FORMAT\t1080\n"
+                "AUDIO_FORMAT\t48khz\n"
+                f"FPS\t{fps}"
+            )
+        else:
+            # Find the start of Column section
+            column_start_index = self.ale_old_read.find("\nColumn")
+            if column_start_index == -1:
+                print("Warning: Could not find 'Column' section in ALE file")
+                column_start_index = self.ale_old_read.find("\nData")
+            
+            # Extract the header (everything before Column section)
+            self.header_section = self.ale_old_read[:column_start_index].strip()
+        
+        # Find column headers
+        try:
+            column_line_match = re.search(r'Column\s*\n(.*?)\n\s*Data', self.ale_old_read, re.DOTALL)
+            if column_line_match:
+                self.column_headers = column_line_match.group(1).strip()
+            else:
+                # Fallback to just using the column names from our prepared dataframe
+                self.column_headers = None
+        except Exception as e:
+            print(f"Error parsing column headers: {e}")
+            self.column_headers = None
+        
+        self.debug_print(f"Header section: {self.header_section}")
+        self.debug_print(f"Column headers: {self.column_headers if self.column_headers else 'Using default columns'}")
+
     def create_new_ale(self):
         """Create a new ALE file with original metadata and merged data"""
         print("Creating new ALE file")
@@ -137,9 +186,8 @@ class ALEConverter:
         # Extract column names and data rows
         csv_header, csv_data = csv.split('\n', 1)
         
-        # Format the column section using our new columns, preserving the original format
-        new_column_section = self.column_section.split("\n", 1)[0]  # Get the "Column" line
-        new_column_section += "\n" + csv_header
+        # Format the column section using our new columns
+        new_column_section = "Column\n" + csv_header
         
         # Clean up formatting issues in data
         csv_data = csv_data.replace('\"\"\"', '')  # Remove triple double quotes
@@ -147,8 +195,8 @@ class ALEConverter:
         csv_data = csv_data.replace('\t\"', '\t')  # Remove leading double quotes
         csv_data = csv_data.replace('\"\t', '\t')  # Remove trailing double quotes
         
-        # Assemble the new ALE file, preserving the original structure
-        self.new_ale = self.header_section + new_column_section + self.data_marker + csv_data
+        # Assemble the new ALE file with proper line breaks between sections
+        self.new_ale = self.header_section + "\n\n" + new_column_section + "\n\nData\n" + csv_data
         
         # For debugging, print first few lines of new ALE
         if self.verbose:
