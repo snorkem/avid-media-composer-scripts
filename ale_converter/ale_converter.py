@@ -610,8 +610,13 @@ class ALEConverter:
             id_val = self.df_ale['ARC_ID'].iloc[i]
             self.debug_print(f"  {name} -> {id_val}")
         
-    def merge_data(self):
-        """Merge ALE data with database data based on archival IDs"""
+    def merge_data(self, custom_mappings=None):
+        """
+        Merge ALE data with database data based on archival IDs
+        
+        Args:
+            custom_mappings (dict, optional): Custom column mappings loaded from JSON file
+        """
         print("Merging ALE with database")
         
         # Select columns to merge from ALE
@@ -641,20 +646,52 @@ class ALEConverter:
             print(f"After alternative extraction - Number of matching IDs: {len(common_ids)}")
             print(f"Sample matching IDs: {list(common_ids)[:5] if common_ids else 'Still no matching IDs found'}")
         
+        # Check if we have custom mappings
+        if custom_mappings:
+            print("Using custom column mappings for merge")
+            
+            # If custom renames are provided, prepare a list of DB columns to include
+            if 'columns_to_rename' in custom_mappings:
+                print(f"Custom column renames: {custom_mappings['columns_to_rename']}")
+            
+            # If columns to drop are provided, exclude them from merge
+            columns_to_drop = custom_mappings.get('columns_to_drop', [])
+            if columns_to_drop:
+                print(f"Will exclude columns: {columns_to_drop}")
+                # Filter out columns to drop from the database
+                db_to_merge = self.df_db.drop(columns=[c for c in columns_to_drop if c in self.df_db.columns])
+            else:
+                db_to_merge = self.df_db
+                
+            # Debug info
+            print(f"Database columns after filtering: {db_to_merge.columns.tolist()}")
+            
+            # Special handling for VENDOR column
+            if 'VENDOR' in db_to_merge.columns:
+                vendor_samples = db_to_merge['VENDOR'].iloc[:5].tolist()
+                print(f"VENDOR column values before merge: {vendor_samples}")
+        else:
+            db_to_merge = self.df_db
+        
         # Merge on ARC_ID
         self.df_ale_db = self.df_ale[selected_ale_columns].merge(
-            self.df_db, how='left', on=['ARC_ID']
+            db_to_merge, how='left', on=['ARC_ID']
         )
         
         # Check if merge was successful
         print(f"Merged data has {len(self.df_ale_db)} rows")
         
         # Check for specific columns that should be present
-        expected_columns = ['DATE', 'BRIEF DESCRIPTION', 'LONG DESCRIPTION']
+        expected_columns = ['DATE', 'BRIEF DESCRIPTION', 'LONG DESCRIPTION', 'VENDOR']
         for col in expected_columns:
             if col in self.df_ale_db.columns:
                 null_count = self.df_ale_db[col].isna().sum()
                 print(f"Column '{col}' has {null_count} null values out of {len(self.df_ale_db)} rows")
+                
+                # Show sample values
+                if len(self.df_ale_db) > 0:
+                    sample_values = self.df_ale_db[col].dropna().iloc[:3].tolist()
+                    print(f"  Sample values: {sample_values}")
             else:
                 print(f"Warning: Expected column '{col}' not found in merged data")
     
@@ -939,9 +976,9 @@ class ALEConverter:
                     print(f"{bg_color}{db_col:<{db_col_width}} │ {Fore.RED}{'[DROPPED]':<{ale_col_width}}{Style.RESET_ALL} │ {sample_val:<{sample_width}}")
             else:
                 if ale_col:
-                    print(f"{db_col:<{db_col_width}} │ {ale_col:<{ale_col_width}} │ {sample_val:<{sample_width}}")
+                    print(f"{db_col:<{db_col_width}} │ {ale_col:<{ale_col_width}} │ {sample_val}")  # Removed the width formatting for sample_val
                 else:
-                    print(f"{db_col:<{db_col_width}} │ {'[DROPPED]':<{ale_col_width}} │ {sample_val:<{sample_width}}")
+                    print(f"{db_col:<{db_col_width}} │ {'[DROPPED]':<{ale_col_width}} │ {sample_val}")  # Removed the width formatting for sample_val
         
         print("─"*terminal_width)
         
@@ -1264,8 +1301,6 @@ positional arguments:
     else:
         converter.extract_ale_ids()
     
-    converter.merge_data()
-    
     # If custom column mappings are provided, load them
     custom_mappings = None
     if hasattr(args, 'custom_columns') and args.custom_columns:
@@ -1281,6 +1316,9 @@ positional arguments:
             print(f"Error loading custom mappings: {e}")
             sys.exit(1)
     
+    # Merge data with custom mappings
+    converter.merge_data(custom_mappings)
+    
     # Prepare columns for output
     if custom_mappings:
         columns_to_drop = custom_mappings.get('columns_to_drop')
@@ -1288,8 +1326,6 @@ positional arguments:
         converter.prepare_ale_columns(columns_to_drop, columns_to_rename)
     else:
         converter.prepare_ale_columns()
-    
-    # REMOVED THE PROBLEMATIC CODE THAT WAS OVERWRITING MAPPINGS
     
     # If --mapping flag is set, visualize column mappings
     if hasattr(args, 'mapping') and args.mapping:
@@ -1311,7 +1347,7 @@ positional arguments:
         print(f"Conversion complete. Output file: {output_path}")
     else:
         print("Warning: No output file was created.")
-
+        
 def main():
     """Main function to run the conversion process"""
     # Parse command line arguments
