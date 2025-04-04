@@ -1,0 +1,36 @@
+{
+  "_IMPORTANT_NOTE": "JSON doesn't officially support comments. This file uses '_' prefixed fields for notes, which should be compatible with most JSON parsers.",
+  
+  "_columns_to_drop_explanation": "Array of column names that should be excluded from the output ALE file. These are database (CSV) column names that you don't want to include. Any column listed here will be removed from the final output.",
+  "columns_to_drop": [
+    "PROJECT ID", 
+    "VENDOR", 
+    "SOURCE ID", 
+    "Image grab", 
+    "Asset Number",
+    "Ingested by",
+    "Ingested date",
+    "Transcript Status",
+    "Script Sync Status",
+    "Rename needed",
+    "AE question",
+    "Transcription Request",
+    "AMAZING CLIP"
+  ],
+  
+  "_columns_to_rename_explanation": "Object that maps database column names to ALE column names. The keys (left side) are the original column names in your CSV database. The values (right side) are what those columns will be renamed to in the ALE output. For example, 'DATE': 'Arc date' means the 'DATE' column from your CSV will appear as 'Arc date' in the ALE file. Note: Only include columns that you want to rename. Columns not listed here will keep their original names (unless they're in columns_to_drop). Special case: 'Name_x' is typically the clip name column after merging.",
+  "columns_to_rename": {
+    "DATE": "Arc date",
+    "BRIEF DESCRIPTION": "Brief desc",
+    "LONG DESCRIPTION": "Long desc",
+    "NUMBER": "Archive ID",
+    "Drop Folder & Initials": "Drop folder",
+    "Name_x": "Clip Name",
+    "NOTES": "Comments",
+    "LOCATION": "Shot Location",
+    "PEOPLE": "People",
+    "COPYRIGHT": "Rights Info"
+  },
+
+  "_usage_explanation": "To use this file with the script: python csv_to_ale_converter.py --ale YOUR_ALE.ale --db YOUR_CSV.csv --custom-columns custom_mapping.json"
+}
