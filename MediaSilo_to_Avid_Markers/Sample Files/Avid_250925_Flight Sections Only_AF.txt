@@ -1,0 +1,6 @@
+afichera	00:04:52:15	V1	Red	?	1		Red
+afichera	00:53:12:20	V1	Red	?	1		Red
+afichera	01:03:18:23	V1	Red	?	1		Red
+afichera	01:04:32:05	V1	Red	?	1		Red
+afichera	01:18:44:01	V1	Red	?	1		Red
+afichera	01:21:34:12	V1	Red	?	1		Red

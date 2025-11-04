@@ -1,0 +1,3 @@
+No,Timecode In,Timecode Out,Timecode Length,Frame In,Frame Out,Frame Length,Name,Comment,Color,
+1,00:01:10:03,00:01:13:13,,,,0,"","Marker 1",blue,
+2,00:02:31:10,00:02:31:10,,,,0,"","Marker 2",yellow,
