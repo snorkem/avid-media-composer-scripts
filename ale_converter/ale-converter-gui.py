@@ -76,78 +76,31 @@ class ConverterWorker(QThread):
             if self.command == 'merge':
                 # Create converter instance
                 self.converter = ALEConverter(
-                    self.args.get('ale_path'), 
-                    self.args.get('db_path'), 
+                    self.args.get('ale_path'),
+                    self.args.get('db_path'),
                     self.args.get('output_path'),
                     True  # Always verbose for the GUI
                 )
-                
-                # Run the conversion steps
-                self.converter.read_files()
-                self.converter.clean_database()
-                self.converter.clean_ale()
-                self.converter.extract_db_ids()
-                
-                # Handle manual ID extraction if specified
+
+                # Get parameters
                 id_position = self.args.get('id_position')
-                if id_position is not None:
-                    # Check if the method exists, otherwise implement it directly
-                    if hasattr(self.converter, 'set_manual_id_extraction'):
-                        self.converter.set_manual_id_extraction(id_position)
-                    else:
-                        # Implement ID extraction manually
-                        self.update_log.emit(f"Manually extracting IDs using position {id_position}")
-                        
-                        # Ensure Name column isn't NaN
-                        self.converter.df_ale["Name"] = self.converter.df_ale["Name"].fillna('')
-                        
-                        # Split the name by underscore
-                        id_prep = pd.DataFrame(
-                            self.converter.df_ale["Name"].str.split('_', n=id_position+1, expand=True).values,
-                            columns=[f'col{i}' for i in range(id_position+2)]
-                        )
-                        
-                        # Use the specified component as the ARC_ID
-                        if f'col{id_position}' in id_prep.columns:
-                            arc_id = id_prep[f'col{id_position}']
-                            # Replace the ARC_ID column if it exists
-                            if 'ARC_ID' in self.converter.df_ale.columns:
-                                self.converter.df_ale['ARC_ID'] = arc_id
-                            else:
-                                self.converter.df_ale.insert(0, 'ARC_ID', arc_id)
-                            
-                            # Print some sample IDs for debugging
-                            sample_ids = self.converter.df_ale['ARC_ID'].iloc[:3].tolist()
-                            self.update_log.emit(f"Sample extracted IDs using position {id_position}: {sample_ids}")
-                        else:
-                            self.update_log.emit(f"Error: Position {id_position} is out of range for most filenames")
-                else:
-                    self.converter.extract_ale_ids()
-                    
-                # Handle custom mappings
                 custom_mappings = self.args.get('custom_mappings')
-                self.converter.merge_data(custom_mappings)
-                
-                # Prepare columns
-                if custom_mappings:
-                    columns_to_drop = custom_mappings.get('columns_to_drop', [])
-                    columns_to_rename = custom_mappings.get('columns_to_rename', {})
-                    self.converter.prepare_ale_columns(columns_to_drop, columns_to_rename)
-                else:
-                    self.converter.prepare_ale_columns()
-                    
-                # Create and write the ALE file
-                self.converter.create_new_ale()
-                output_path = self.converter.write_output()
-                
+
+                # Run the conversion using the new refactored API
+                output_path = self.converter.convert_with_merge(
+                    id_position=id_position,
+                    column_mapping_config=custom_mappings
+                )
+
                 self.finished.emit(True, f"Conversion complete. Output file: {output_path}")
                 
             elif self.command == 'export':
                 output_path = ALEConverter.export_ale_to_spreadsheet(
                     self.args.get('ale_path'),
                     self.args.get('output_path'),
-                    self.args.get('format', 'csv'),
-                    self.args.get('fps', 23.976)
+                    self.args.get('format', 'csv'),  # Note: parameter name in API is 'output_format'
+                    self.args.get('fps', 23.976),
+                    verbose=True
                 )
                 
                 if output_path:
@@ -831,91 +784,32 @@ class MainWindow(QMainWindow):
         # Make sure we have the necessary files
         if not self.validate_merge_inputs(preview=True):
             return
-            
-        # Create a temporary converter instance for visualization
+
+        # Simple preview - just show info about the files
         try:
-            converter = ALEConverter(
-                self.ale_path_edit.text(), 
-                self.db_path_edit.text(), 
-                None,  # No output path for preview
-                True   # Verbose mode
-            )
-            
-            # Capture console output to log
-            original_stdout = sys.stdout
-            sys.stdout = self.log_redirector
-            
-            # Run the conversion steps
-            self.append_log("\nPreparing preview...")
-            converter.read_files()
-            converter.clean_database()
-            converter.clean_ale()
-            converter.extract_db_ids()
-            
-            # Handle manual ID extraction if specified
-            if self.id_position_spin.value() > 0:
-                position = self.id_position_spin.value() - 1
-                # Check if the method exists, otherwise implement it directly
-                if hasattr(converter, 'set_manual_id_extraction'):
-                    converter.set_manual_id_extraction(position)
-                else:
-                    # Implement ID extraction manually
-                    self.append_log(f"Manually extracting IDs using position {position}")
-                    
-                    # Ensure Name column isn't NaN
-                    converter.df_ale["Name"] = converter.df_ale["Name"].fillna('')
-                    
-                    # Split the name by underscore
-                    id_prep = pd.DataFrame(
-                        converter.df_ale["Name"].str.split('_', n=position+1, expand=True).values,
-                        columns=[f'col{i}' for i in range(position+2)]
-                    )
-                    
-                    # Use the specified component as the ARC_ID
-                    if f'col{position}' in id_prep.columns:
-                        arc_id = id_prep[f'col{position}']
-                        # Replace the ARC_ID column if it exists
-                        if 'ARC_ID' in converter.df_ale.columns:
-                            converter.df_ale['ARC_ID'] = arc_id
-                        else:
-                            converter.df_ale.insert(0, 'ARC_ID', arc_id)
-                        
-                        # Print some sample IDs for debugging
-                        sample_ids = converter.df_ale['ARC_ID'].iloc[:3].tolist()
-                        self.append_log(f"Sample extracted IDs using position {position}: {sample_ids}")
-                    else:
-                        self.append_log(f"Error: Position {position} is out of range for most filenames")
-            else:
-                converter.extract_ale_ids()
-                
-            # Merge data with custom mappings
-            converter.merge_data(self.column_mappings)
-            
-            if self.column_mappings:
-                converter.prepare_ale_columns(
-                    self.column_mappings.get('columns_to_drop', []),
-                    self.column_mappings.get('columns_to_rename', {})
-                )
-            else:
-                converter.prepare_ale_columns()
-            
-            # Restore stdout
-            sys.stdout = original_stdout
-            
-            # Display the preview dialog with editing enabled
-            preview_dialog = PreviewDialog(converter, True, self)
-            result = preview_dialog.exec_()
-            
-            # If dialog was accepted and changes were made, update the column mappings
-            # If dialog was accepted and changes were made, update the column mappings
-            if result == QDialog.Accepted and preview_dialog.column_mappings:
-                self.column_mappings = preview_dialog.column_mappings
-                self.append_log(f"\nColumn mapping updated:")
-                self.append_log(f"Columns to drop: {len(self.column_mappings['columns_to_drop'])}")
-                self.append_log(f"Columns to rename: {len(self.column_mappings['columns_to_rename'])}")
-            
-            self.append_log("\nPreview complete. No output file was created.")
-            
+            ale_path = self.ale_path_edit.text()
+            db_path = self.db_path_edit.text()
+
+            self.append_log("\n=== PREVIEW MODE ===")
+            self.append_log(f"ALE File: {ale_path}")
+            self.append_log(f"Database File: {db_path}")
+
+            # Read just enough to show what will be processed
+            from pathlib import Path
+            from src.io.ale_reader import ALEReader
+            from src.io.spreadsheet_io import SpreadsheetReader
+
+            ale_data = ALEReader.read_file(Path(ale_path), verbose=True)
+            self.append_log(f"\nALE file contains {len(ale_data.data)} clips")
+            self.append_log(f"ALE columns: {', '.join(ale_data.data.columns.tolist()[:5])}...")
+
+            reader = SpreadsheetReader()
+            db_df = reader.read_file(Path(db_path), verbose=True)
+            self.append_log(f"\nDatabase contains {len(db_df)} records")
+            self.append_log(f"Database columns: {', '.join(db_df.columns.tolist()[:5])}...")
+
+            self.append_log("\n=== Preview complete. Use 'Merge' button to process files. ===")
+
         except Exception as e:
             import traceback
             error_msg = f"Error during preview: {str(e)}\n{traceback.format_exc()}"
@@ -1760,255 +1654,18 @@ class PreviewDialog(QDialog):
         # Make sure to get the latest state
         self.apply_changes()
         return self.column_mappings
-            
-    def preview_convert(self):
-        """Preview the convert operation"""
-        if not self.validate_convert_inputs(preview=True):
-            return
-            
-        try:
-            # Load the spreadsheet to get column info
-            file_path = self.spreadsheet_path_edit.text()
-            file_ext = Path(file_path).suffix.lower()
-            
-            if file_ext in ['.xlsx', '.xls', '.xlsm']:
-                try:
-                    data = pd.read_excel(file_path, dtype=str, nrows=10)
-                except Exception as e:
-                    self.append_log(f"Error reading Excel file: {e}")
-                    QMessageBox.warning(self, "Error", f"Error reading Excel file: {str(e)}")
-                    return
-            else:
-                try:
-                    # Default to CSV
-                    data = pd.read_csv(file_path, dtype=str, nrows=10)
-                except Exception as e:
-                    self.append_log(f"Error reading CSV file: {e}")
-                    QMessageBox.warning(self, "Error", f"Error reading CSV file: {str(e)}")
-                    return
-            
-            # Create a simple converter-like object to hold the data
-            class SimpleConverter:
-                pass
-                
-            converter = SimpleConverter()
-            converter.df_db = data
-            
-            # Display the preview dialog
-            preview_dialog = PreviewDialog(converter, self)
-            preview_dialog.tabs.removeTab(1)  # Remove ALE tab
-            preview_dialog.tabs.removeTab(1)  # Remove Merged tab (now at index 1)
-            preview_dialog.tabs.removeTab(1)  # Remove Mapping tab (now at index 1)
-            preview_dialog.exec_()
-            
-            self.append_log("\nPreview complete. No output file was created.")
-            
-        except Exception as e:
-            import traceback
-            error_msg = f"Error during preview: {str(e)}\n{traceback.format_exc()}"
-            self.append_log(error_msg)
-            QMessageBox.critical(self, "Preview Error", f"Preview failed: {str(e)}")
-        
-    def validate_export_inputs(self):
-        """Validate inputs for export operation"""
-        # Check required files
-        ale_path = self.export_ale_path_edit.text()
-        if not ale_path:
-            QMessageBox.warning(self, "Input Error", "Please select an ALE file.")
-            return False
-            
-        output_path = self.export_output_path_edit.text()
-        if not output_path:
-            QMessageBox.warning(self, "Input Error", "Please select an output file path.")
-            return False
-            
-        # Check if files exist
-        if not os.path.exists(ale_path):
-            QMessageBox.warning(self, "Input Error", f"ALE file not found: {ale_path}")
-            return False
-            
-        return True
-        
-    def validate_convert_inputs(self, preview=False):
-        """Validate inputs for convert operation"""
-        # Check required files
-        spreadsheet_path = self.spreadsheet_path_edit.text()
-        if not spreadsheet_path:
-            QMessageBox.warning(self, "Input Error", "Please select a spreadsheet file.")
-            return False
-            
-        # Check output path only if not in preview mode
-        if not preview:
-            output_path = self.convert_output_path_edit.text()
-            if not output_path:
-                QMessageBox.warning(self, "Input Error", "Please select an output file path.")
-                return False
-                
-        # Check if files exist
-        if not os.path.exists(spreadsheet_path):
-            QMessageBox.warning(self, "Input Error", f"Spreadsheet file not found: {spreadsheet_path}")
-            return False
-            
-        # Check template file if specified
-        template_path = self.template_path_edit.text()
-        if template_path and not os.path.exists(template_path):
-            QMessageBox.warning(self, "Input Error", f"Template file not found: {template_path}")
-            return False
-            
-        return True
-        
-    def run_export(self):
-        """Run the export operation"""
-        if not self.validate_export_inputs():
-            return
-            
-        # Get input values
-        ale_path = self.export_ale_path_edit.text()
-        output_path = self.export_output_path_edit.text()
-        export_format = self.export_format_combo.currentText()
-        fps = float(self.export_fps_combo.currentText())
-        
-        # Start the worker thread
-        self.append_log(f"\nStarting export operation...")
-        self.append_log(f"ALE file: {ale_path}")
-        self.append_log(f"Output file: {output_path}")
-        self.append_log(f"Format: {export_format}")
-        self.append_log(f"FPS: {fps}")
-        
-        # Show progress bar
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # Indeterminate progress
-        
-        # Configure and start the worker
-        self.worker.command = 'export'
-        self.worker.args = {
-            'ale_path': ale_path,
-            'output_path': output_path,
-            'format': export_format,
-            'fps': fps
-        }
-        self.worker.start()
-        
-    def run_convert(self):
-        """Run the convert operation"""
-        if not self.validate_convert_inputs():
-            return
-            
-        # Get input values
-        spreadsheet_path = self.spreadsheet_path_edit.text()
-        output_path = self.convert_output_path_edit.text()
-        template_path = self.template_path_edit.text() if self.template_path_edit.text() else None
-        fps = float(self.convert_fps_combo.currentText())
-        
-        # Start the worker thread
-        self.append_log(f"\nStarting convert operation...")
-        self.append_log(f"Spreadsheet file: {spreadsheet_path}")
-        self.append_log(f"Output file: {output_path}")
-        if template_path:
-            self.append_log(f"Template file: {template_path}")
-        self.append_log(f"FPS: {fps}")
-        
-        # Show progress bar
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)  # Indeterminate progress
-        
-        # Configure and start the worker
-        self.worker.command = 'convert'
-        self.worker.args = {
-            'spreadsheet_path': spreadsheet_path,
-            'output_path': output_path,
-            'template_path': template_path,
-            'fps': fps
-        }
-        self.worker.start()
-        
-    def conversion_finished(self, success, message):
-        """Handle conversion completion"""
-        # Hide progress bar
-        self.progress_bar.setVisible(False)
-        
-        # Update status bar
-        if success:
-            self.status_bar.showMessage(message, 5000)
-            QMessageBox.information(self, "Operation Complete", message)
-        else:
-            self.status_bar.showMessage("Operation failed", 5000)
-            QMessageBox.critical(self, "Operation Failed", message)
-            
-    def append_log(self, text):
-        """Append text to the log display"""
-        self.log_text.append(text)
-        # Scroll to the bottom
-        self.log_text.ensureCursorVisible()
-        
-    def show_about(self):
-        """Show about dialog"""
-        QMessageBox.about(
-            self, 
-            "About ALE Converter GUI",
-            "<h3>ALE Converter GUI</h3>"
-            "<p>A graphical interface for the ALE Converter script.</p>"
-            "<p>This application provides a user-friendly way to:</p>"
-            "<ul>"
-            "<li>Merge ALE files with metadata from a database</li>"
-            "<li>Export ALE files to CSV or Excel format</li>"
-            "<li>Convert CSV or Excel files to ALE format</li>"
-            "</ul>"
-            "<p>Built with PyQt5.</p>"
-        )
-        
-    def load_settings(self):
-        """Load saved settings"""
-        # Restore window geometry
-        geometry = self.settings.value("geometry")
-        if geometry:
-            self.restoreGeometry(geometry)
-            
-        # Restore FPS settings
-        fps = self.settings.value("fps")
-        if fps:
-            index = self.fps_combo.findText(fps)
-            if index >= 0:
-                self.fps_combo.setCurrentIndex(index)
-                
-            index = self.export_fps_combo.findText(fps)
-            if index >= 0:
-                self.export_fps_combo.setCurrentIndex(index)
-                
-            index = self.convert_fps_combo.findText(fps)
-            if index >= 0:
-                self.convert_fps_combo.setCurrentIndex(index)
-        
-    def save_settings(self):
-        """Save settings"""
-        # Save window geometry
-        self.settings.setValue("geometry", self.saveGeometry())
-        
-        # Save FPS settings
-        self.settings.setValue("fps", self.fps_combo.currentText())
 
     def accept(self):
         """Override accept to ensure column mappings are saved"""
         if self.allow_editing:
             self.apply_changes()  # Make sure changes are applied before closing
         super().accept()
-    
+
     def reject(self):
         """Override reject to discard changes when Cancel is clicked"""
         # No need to save changes when rejecting the dialog
         # Just call the parent class's reject method
         super().reject()
-
-    def closeEvent(self, event):
-        """Handle application close event"""
-        # Save settings
-        self.save_settings()
-        
-        # Restore original stdout
-        sys.stdout = self.original_stdout
-        
-        # Accept the close event
-        event.accept()
 
 def main():
     # Create application
