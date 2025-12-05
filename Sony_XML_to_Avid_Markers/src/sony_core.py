@@ -5,11 +5,32 @@ Converts Sony camera XML metadata files to Avid marker format.
 Extracts KlvPacket markers and converts timecodes using frame offsets.
 """
 
+from __future__ import annotations
+
 import logging
-from pathlib import Path
-from typing import List, Dict, Optional, Callable
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
+from pathlib import Path
+
 from timecode import Timecode
+
+# ============================================================================
+# Module Constants
+# ============================================================================
+
+# Sony XML namespace
+SONY_NAMESPACE = {"ns": "urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.20"}
+
+# Avid marker output constants
+AVID_TRACK = "V1"
+AVID_DURATION = "1"
+
+# Frame rate mapping for Sony formatFps strings
+FPS_MAP = {
+    "23.98": 23.976,
+    "29.97": 29.97,
+    "59.94": 59.94,
+}
 
 
 # ============================================================================
@@ -67,25 +88,60 @@ def decode_length_value(hex_str: str) -> str:
     if len(hex_str) < 2:
         raise ValueError("lengthValue too short")
 
-    # First 2 digits are length (not used for validation, just metadata)
-    # length_byte = int(hex_str[0:2], 16)
-
-    # Remaining digits are UTF-8 encoded text
+    # Remaining digits are UTF-8 encoded text (skip first 2 length bytes)
     text_hex = hex_str[2:]
 
     # Convert hex pairs to bytes
     try:
         byte_data = bytes.fromhex(text_hex)
-        return byte_data.decode('utf-8')
+        return byte_data.decode("utf-8")
     except (ValueError, UnicodeDecodeError) as e:
-        raise ValueError(f"Error decoding lengthValue: {e}")
+        raise ValueError(f"Error decoding lengthValue: {e}") from e
+
+
+# ============================================================================
+# Frame Rate Parsing
+# ============================================================================
+
+def parse_format_fps(format_fps_str: str) -> float:
+    """
+    Parse Sony formatFps string to numeric frame rate.
+
+    Args:
+        format_fps_str: Frame rate string from VideoFrame element (e.g., "23.98p", "24p")
+
+    Returns:
+        Float frame rate (e.g., 23.976, 24.0)
+
+    Examples:
+        "23.98p" -> 23.976
+        "24p" -> 24.0
+        "29.97p" -> 29.97
+        "59.94p" -> 59.94
+        "25p" -> 25.0
+
+    Raises:
+        ValueError: If format string is not recognized
+    """
+    # Remove 'p' or 'P' suffix if present (Python 3.9+)
+    fps_str = format_fps_str.removesuffix("p").removesuffix("P")
+
+    # Map common values to precise frame rates using module constant
+    if fps_str in FPS_MAP:
+        return FPS_MAP[fps_str]
+
+    # Try direct conversion for other values (24, 25, 30, 50, 60, etc.)
+    try:
+        return float(fps_str)
+    except ValueError as e:
+        raise ValueError(f"Unrecognized formatFps value: '{format_fps_str}'") from e
 
 
 # ============================================================================
 # Timecode Calculation
 # ============================================================================
 
-def calculate_marker_timecode(start_tc_str: str, frame_offset: int, fps: int) -> str:
+def calculate_marker_timecode(start_tc_str: str, frame_offset: int, fps: float) -> str:
     """
     Calculate marker timecode by adding frame offset to start timecode.
 
@@ -119,7 +175,9 @@ def calculate_marker_timecode(start_tc_str: str, frame_offset: int, fps: int) ->
 # Marker Processing
 # ============================================================================
 
-def filter_shot_markers(markers: List[Dict], log_callback: Optional[Callable] = None) -> List[Dict]:
+def filter_shot_markers(
+    markers: list[dict], log_callback: Callable[[str], None] | None = None
+) -> list[dict]:
     """
     Filter markers to include only _ShotMark entries.
 
@@ -133,7 +191,7 @@ def filter_shot_markers(markers: List[Dict], log_callback: Optional[Callable] = 
     Returns:
         Filtered list of markers
     """
-    shot_markers = [m for m in markers if m['text'].startswith('_ShotMark')]
+    shot_markers = [m for m in markers if m["text"].startswith("_ShotMark")]
 
     excluded_count = len(markers) - len(shot_markers)
     if excluded_count > 0 and log_callback:
@@ -142,7 +200,7 @@ def filter_shot_markers(markers: List[Dict], log_callback: Optional[Callable] = 
     return shot_markers
 
 
-def determine_marker_color(lengthValue_hex: str) -> str:
+def determine_marker_color(length_value_hex: str) -> str:
     """
     Determine Avid marker color based on lengthValue hex string.
 
@@ -152,7 +210,7 @@ def determine_marker_color(lengthValue_hex: str) -> str:
         - Red: default (all other cases)
 
     Args:
-        lengthValue_hex: Hex string from KlvPacket lengthValue attribute
+        length_value_hex: Hex string from KlvPacket lengthValue attribute
 
     Returns:
         Color name: "Green", "Blue", or "Red"
@@ -162,19 +220,51 @@ def determine_marker_color(lengthValue_hex: str) -> str:
         "0A5F53686F744D61726B31" ends with "31" -> "Blue"
         "095F5265635374617274" ends with "74" -> "Red"
     """
-    if lengthValue_hex.endswith('32'):
-        return 'Green'
-    elif lengthValue_hex.endswith('31'):
-        return 'Blue'
-    else:
-        return 'Red'
+    # Use match/case for cleaner conditional logic (Python 3.10+)
+    match length_value_hex[-2:]:
+        case "32":
+            return "Green"
+        case "31":
+            return "Blue"
+        case _:
+            return "Red"
+
+
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+
+def sanitize_username(username: str) -> str:
+    """
+    Sanitize username for Avid marker format.
+
+    Removes Sony camera naming pattern suffix (M01) and cleans the string.
+
+    Args:
+        username: Raw username string
+
+    Returns:
+        Sanitized username (lowercase, no spaces, no M01 suffix)
+
+    Examples:
+        "A003C010_251203EHM01" -> "a003c010_251203eh"
+        "Test User" -> "testuser"
+    """
+    # Remove "M01" suffix if present (Sony camera naming pattern)
+    cleaned = username.removesuffix("M01")
+    # Lowercase and remove spaces
+    return cleaned.lower().replace(" ", "")
 
 
 # ============================================================================
 # XML Parsing
 # ============================================================================
 
-def parse_sony_xml(xml_path: Path, log_callback: Optional[Callable] = None) -> Dict:
+
+def parse_sony_xml(
+    xml_path: Path, log_callback: Callable[[str], None] | None = None
+) -> dict:
     """
     Parse Sony XML file and extract marker data.
 
@@ -198,49 +288,84 @@ def parse_sony_xml(xml_path: Path, log_callback: Optional[Callable] = None) -> D
         tree = ET.parse(xml_path)
         root = tree.getroot()
 
-        # Define namespace (CRITICAL!)
-        ns = {'ns': 'urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.20'}
-
-        # Extract frame rate
-        ltc_table = root.find("ns:LtcChangeTable", ns)
+        # Extract frame rate - prefer formatFps from VideoFrame over tcFps
+        ltc_table = root.find("ns:LtcChangeTable", SONY_NAMESPACE)
         if ltc_table is None:
             raise ValueError("LtcChangeTable not found in XML")
-        fps = int(ltc_table.attrib.get("tcFps", "24"))
+
+        # Validate and extract tcFps
+        tc_fps_str = ltc_table.attrib.get("tcFps")
+        if tc_fps_str is None:
+            raise ValueError("Missing tcFps attribute in LtcChangeTable")
+        try:
+            tc_fps = int(tc_fps_str)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid tcFps value: '{tc_fps_str}' (expected integer)"
+            ) from e
+
+        # Try to get actual video formatFps (more accurate)
+        video_frame = root.find(".//ns:VideoFrame", SONY_NAMESPACE)
+        fps = tc_fps  # Default to tcFps
+
+        if video_frame is not None:
+            format_fps_str = video_frame.attrib.get("formatFps")
+            if format_fps_str:
+                try:
+                    format_fps = parse_format_fps(format_fps_str)
+
+                    # Check for mismatch and warn
+                    if abs(format_fps - tc_fps) > 0.01 and log_callback:
+                        log_callback(
+                            f"Warning: Frame rate mismatch detected - "
+                            f"tcFps={tc_fps}, formatFps={format_fps_str} ({format_fps}). "
+                            f"Using formatFps={format_fps} for accurate timecode calculation."
+                        )
+
+                    fps = format_fps  # Use the more accurate formatFps
+                except ValueError as e:
+                    if log_callback:
+                        log_callback(
+                            f"Warning: Could not parse formatFps '{format_fps_str}': {e}. "
+                            f"Using tcFps={tc_fps}"
+                        )
 
         # Extract start timecode
-        ltc_change = root.find(".//ns:LtcChange[@frameCount='0']", ns)
+        ltc_change = root.find(".//ns:LtcChange[@frameCount='0']", SONY_NAMESPACE)
         if ltc_change is None:
             raise ValueError("Start LtcChange not found")
+
         start_tc_hex = ltc_change.attrib.get("value")
+        if start_tc_hex is None:
+            raise ValueError("Missing 'value' attribute in start LtcChange element")
+
         start_timecode = hex_to_timecode(start_tc_hex)
 
         # Extract markers
         markers = []
-        klv_packets = root.findall(".//ns:KlvPacket", ns)
+        klv_packets = root.findall(".//ns:KlvPacket", SONY_NAMESPACE)
 
         for pkt in klv_packets:
-            frame_count = int(pkt.attrib['frameCount'])
-            length_value = pkt.attrib['lengthValue']
-
-            # Decode hex to text
+            frame_count = int(pkt.attrib["frameCount"])
+            length_value = pkt.attrib["lengthValue"]
             marker_text = decode_length_value(length_value)
 
             markers.append({
-                'frameCount': frame_count,
-                'text': marker_text,
-                'lengthValue': length_value  # Keep for color determination
+                "frameCount": frame_count,
+                "text": marker_text,
+                "lengthValue": length_value,  # Keep for color determination
             })
 
         return {
-            'fps': fps,
-            'start_timecode': start_timecode,
-            'markers': markers
+            "fps": fps,
+            "start_timecode": start_timecode,
+            "markers": markers,
         }
 
     except ET.ParseError as e:
-        raise ValueError(f"XML parsing error: {e}")
+        raise ValueError(f"XML parsing error: {e}") from e
     except Exception as e:
-        raise ValueError(f"Error parsing Sony XML: {e}")
+        raise ValueError(f"Error parsing Sony XML: {e}") from e
 
 
 # ============================================================================
@@ -264,8 +389,12 @@ def generate_output_filename(input_xml_path: Path) -> str:
     return f"{stem}_markers.txt"
 
 
-def write_avid_markers(markers: List[Dict], output_path: Path,
-                       username: str = 'user', log_callback: Optional[Callable] = None):
+def write_avid_markers(
+    markers: list[dict],
+    output_path: Path,
+    username: str = "user",
+    log_callback: Callable[[str], None] | None = None,
+) -> None:
     """
     Write markers to Avid marker format text file.
 
@@ -277,17 +406,14 @@ def write_avid_markers(markers: List[Dict], output_path: Path,
         username: Username for marker entries
         log_callback: Optional logging function
     """
-    TRACK = 'V1'
-    DURATION = '1'
-
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         for marker in markers:
-            timecode = marker['timecode']
-            color = marker['color']
-            comment = marker['text']
+            timecode = marker["timecode"]
+            color = marker["color"]
+            comment = marker["text"]
 
             # Format: user\tTC\tV1\tColor\tComment\t1\t\tColor\n
-            line = f"{username}\t{timecode}\t{TRACK}\t{color}\t{comment}\t{DURATION}\t\t{color}\n"
+            line = f"{username}\t{timecode}\t{AVID_TRACK}\t{color}\t{comment}\t{AVID_DURATION}\t\t{color}\n"
             f.write(line)
 
     if log_callback:
@@ -298,7 +424,9 @@ def write_avid_markers(markers: List[Dict], output_path: Path,
 # File Discovery
 # ============================================================================
 
-def find_xml_files(directory: Path, log_callback: Optional[Callable] = None) -> List[Path]:
+def find_xml_files(
+    directory: Path, log_callback: Callable[[str], None] | None = None
+) -> list[Path]:
     """
     Find all Sony XML files in directory.
 
@@ -309,11 +437,8 @@ def find_xml_files(directory: Path, log_callback: Optional[Callable] = None) -> 
     Returns:
         List of paths to XML files, sorted by filename
     """
-    xml_files = []
-
-    # Case-insensitive search
-    for pattern in ['*.XML', '*.xml']:
-        xml_files.extend(directory.glob(pattern))
+    # Case-insensitive search - check all files with .xml extension
+    xml_files = [f for f in directory.iterdir() if f.suffix.lower() == ".xml"]
 
     if not xml_files:
         if log_callback:
@@ -330,8 +455,12 @@ def find_xml_files(directory: Path, log_callback: Optional[Callable] = None) -> 
 # Single File Processing
 # ============================================================================
 
-def process_single_xml(xml_path: Path, output_dir: Path, username: Optional[str] = None,
-                       log_callback: Optional[Callable] = None) -> bool:
+def process_single_xml(
+    xml_path: Path,
+    output_dir: Path,
+    username: str | None = None,
+    log_callback: Callable[[str], None] | None = None,
+) -> bool:
     """
     Process a single Sony XML file and generate Avid markers.
 
@@ -348,22 +477,15 @@ def process_single_xml(xml_path: Path, output_dir: Path, username: Optional[str]
         # Use filename without extension if no username provided
         if username is None:
             username = xml_path.stem
-            # Remove "M01" suffix if present (Sony camera naming pattern)
-            if username.endswith('M01'):
-                username = username[:-3]
 
-        # Clean up username (lowercase, remove spaces)
-        username = username.lower().replace(' ', '')
+        # Clean up username using helper function
+        username = sanitize_username(username)
+
         # Parse XML
         data = parse_sony_xml(xml_path, log_callback)
 
-        # Validate parsed data
-        if data['fps'] not in [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]:
-            if log_callback:
-                log_callback(f"Warning: Unusual frame rate {data['fps']}")
-
         # Filter markers
-        shot_markers = filter_shot_markers(data['markers'], log_callback)
+        shot_markers = filter_shot_markers(data["markers"], log_callback)
 
         if not shot_markers:
             if log_callback:
@@ -375,20 +497,22 @@ def process_single_xml(xml_path: Path, output_dir: Path, username: Optional[str]
         for marker in shot_markers:
             try:
                 timecode = calculate_marker_timecode(
-                    data['start_timecode'],
-                    marker['frameCount'],
-                    data['fps']
+                    data["start_timecode"],
+                    marker["frameCount"],
+                    data["fps"],
                 )
-                color = determine_marker_color(marker['lengthValue'])
+                color = determine_marker_color(marker["lengthValue"])
 
                 avid_markers.append({
-                    'timecode': timecode,
-                    'text': marker['text'],
-                    'color': color
+                    "timecode": timecode,
+                    "text": marker["text"],
+                    "color": color,
                 })
             except Exception as e:
                 if log_callback:
-                    log_callback(f"Error processing marker at frame {marker['frameCount']}: {e}")
+                    log_callback(
+                        f"Error processing marker at frame {marker['frameCount']}: {e}"
+                    )
                 continue
 
         if not avid_markers:
@@ -403,17 +527,10 @@ def process_single_xml(xml_path: Path, output_dir: Path, username: Optional[str]
 
         return True
 
-    except FileNotFoundError:
+    except (FileNotFoundError, ET.ParseError, ValueError) as e:
         if log_callback:
-            log_callback(f"File not found: {xml_path}")
-        return False
-    except ET.ParseError as e:
-        if log_callback:
-            log_callback(f"XML parsing error in {xml_path.name}: {e}")
-        return False
-    except ValueError as e:
-        if log_callback:
-            log_callback(f"Data validation error in {xml_path.name}: {e}")
+            error_type = type(e).__name__
+            log_callback(f"{error_type} in {xml_path.name}: {e}")
         return False
     except Exception as e:
         if log_callback:
@@ -426,12 +543,15 @@ def process_single_xml(xml_path: Path, output_dir: Path, username: Optional[str]
 # ============================================================================
 
 class SonyXMLConverter:
-    """
-    Main converter class for Sony XML to Avid markers.
-    """
+    """Main converter class for Sony XML to Avid markers."""
 
-    def __init__(self, input_dir: Path, output_dir: Path,
-                 username: Optional[str] = None, verbose: bool = False):
+    def __init__(
+        self,
+        input_dir: Path,
+        output_dir: Path,
+        username: str | None = None,
+        verbose: bool = False,
+    ) -> None:
         """
         Initialize converter.
 
@@ -443,42 +563,37 @@ class SonyXMLConverter:
         """
         self.input_dir = input_dir
         self.output_dir = output_dir
-        self.username = username.lower().replace(' ', '') if username else None
+        self.username = sanitize_username(username) if username else None
         self.verbose = verbose
 
         # Setup logging
         self._setup_logging()
 
-    def _setup_logging(self):
+    def _setup_logging(self) -> None:
         """Configure logging based on verbosity."""
         level = logging.DEBUG if self.verbose else logging.INFO
         logging.basicConfig(
             level=level,
-            format='%(asctime)s - %(levelname)s - %(message)s',
+            format="%(asctime)s - %(levelname)s - %(message)s",
             handlers=[
-                logging.FileHandler('sony_xml_conversion.log'),
-                logging.StreamHandler()
-            ]
+                logging.FileHandler("sony_xml_conversion.log"),
+                logging.StreamHandler(),
+            ],
         )
         self.logger = logging.getLogger(__name__)
 
-    def log(self, message: str, level: str = 'info'):
+    def log(self, message: str, level: str = "info") -> None:
         """Internal logging helper."""
-        if level == 'debug':
-            self.logger.debug(message)
-        elif level == 'warning':
-            self.logger.warning(message)
-        elif level == 'error':
-            self.logger.error(message)
-        else:
-            self.logger.info(message)
+        # Use getattr for cleaner dispatch
+        log_method = getattr(self.logger, level, self.logger.info)
+        log_method(message)
 
-    def convert_all(self) -> Dict[str, int]:
+    def convert_all(self) -> dict[str, int]:
         """
         Process all XML files in input directory.
 
         Returns:
-            Dict with 'success', 'failed', 'no_markers' counts
+            Dict with 'success' and 'failed' counts
         """
         self.log("=" * 60)
         self.log("Starting Sony XML to Avid Marker conversion")
@@ -495,13 +610,13 @@ class SonyXMLConverter:
 
         if not xml_files:
             self.log("No XML files found. Exiting.")
-            return {'success': 0, 'failed': 0, 'no_markers': 0}
+            return {"success": 0, "failed": 0}
 
         # Create output directory if needed
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Process each file
-        stats = {'success': 0, 'failed': 0, 'no_markers': 0}
+        stats = {"success": 0, "failed": 0}
 
         for i, xml_path in enumerate(xml_files, 1):
             self.log(f"\n[{i}/{len(xml_files)}] Processing: {xml_path.name}")
@@ -510,13 +625,13 @@ class SonyXMLConverter:
                 xml_path,
                 self.output_dir,
                 self.username,
-                self.log
+                self.log,
             )
 
             if result:
-                stats['success'] += 1
+                stats["success"] += 1
             else:
-                stats['failed'] += 1
+                stats["failed"] += 1
 
         # Final summary
         self.log("\n" + "=" * 60)
