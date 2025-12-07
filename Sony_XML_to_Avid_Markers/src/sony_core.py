@@ -414,6 +414,9 @@ def write_avid_markers(
         username: Username for marker entries
         log_callback: Optional logging function
     """
+    if output_path.exists() and log_callback:
+        log_callback(f"Overwriting existing file: {output_path.name}")
+
     with open(output_path, "w", encoding="utf-8") as f:
         for marker in markers:
             timecode = marker["timecode"]
@@ -479,7 +482,7 @@ def process_single_xml(
     username: str | None = None,
     log_callback: Callable[[str], None] | None = None,
     tc_offset_seconds: float = 0,
-) -> bool:
+) -> str:
     """
     Process a single Sony XML file and generate Avid markers.
 
@@ -491,7 +494,7 @@ def process_single_xml(
         tc_offset_seconds: Timecode offset in seconds (positive=forward, negative=backward)
 
     Returns:
-        True if successful, False otherwise
+        "success" if markers written, "skipped" if no markers, "failed" on error
     """
     try:
         # Use filename without extension if no username provided
@@ -510,7 +513,7 @@ def process_single_xml(
         if not shot_markers:
             if log_callback:
                 log_callback(f"No ShotMark entries found in {xml_path.name}")
-            return True  # Not an error, just no markers
+            return "skipped"
 
         # Convert to Avid format
         avid_markers = []
@@ -539,24 +542,24 @@ def process_single_xml(
         if not avid_markers:
             if log_callback:
                 log_callback(f"No markers generated for {xml_path.name}")
-            return True
+            return "skipped"
 
         # Write output
         output_filename = generate_output_filename(xml_path)
         output_path = output_dir / output_filename
         write_avid_markers(avid_markers, output_path, username, log_callback)
 
-        return True
+        return "success"
 
     except (FileNotFoundError, ET.ParseError, ValueError) as e:
         if log_callback:
             error_type = type(e).__name__
             log_callback(f"{error_type} in {xml_path.name}: {e}")
-        return False
+        return "failed"
     except Exception as e:
         if log_callback:
             log_callback(f"Unexpected error processing {xml_path.name}: {e}")
-        return False
+        return "failed"
 
 
 # ============================================================================
@@ -647,7 +650,7 @@ class SonyXMLConverter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Process each file
-        stats = {"success": 0, "failed": 0}
+        stats = {"success": 0, "skipped": 0, "failed": 0}
 
         for i, xml_path in enumerate(xml_files, 1):
             self.log(f"\n[{i}/{len(xml_files)}] Processing: {xml_path.name}")
@@ -660,8 +663,10 @@ class SonyXMLConverter:
                 self.tc_offset_seconds,
             )
 
-            if result:
+            if result == "success":
                 stats["success"] += 1
+            elif result == "skipped":
+                stats["skipped"] += 1
             else:
                 stats["failed"] += 1
 
@@ -670,6 +675,7 @@ class SonyXMLConverter:
         self.log("Conversion Summary:")
         self.log(f"  Total files processed: {len(xml_files)}")
         self.log(f"  Successful: {stats['success']}")
+        self.log(f"  Skipped (no markers): {stats['skipped']}")
         self.log(f"  Failed: {stats['failed']}")
         self.log("=" * 60)
 
