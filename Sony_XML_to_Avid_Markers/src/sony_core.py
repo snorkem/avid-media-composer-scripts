@@ -141,7 +141,9 @@ def parse_format_fps(format_fps_str: str) -> float:
 # Timecode Calculation
 # ============================================================================
 
-def calculate_marker_timecode(start_tc_str: str, frame_offset: int, fps: float) -> str:
+def calculate_marker_timecode(
+    start_tc_str: str, frame_offset: int, fps: float, tc_offset_seconds: float = 0
+) -> str:
     """
     Calculate marker timecode by adding frame offset to start timecode.
 
@@ -151,6 +153,7 @@ def calculate_marker_timecode(start_tc_str: str, frame_offset: int, fps: float) 
         start_tc_str: Start timecode as "HH:MM:SS:FF"
         frame_offset: Number of frames to add
         fps: Frame rate (e.g., 24)
+        tc_offset_seconds: Additional offset in seconds (positive=forward, negative=backward)
 
     Returns:
         Timecode string in "HH:MM:SS:FF" format
@@ -166,6 +169,11 @@ def calculate_marker_timecode(start_tc_str: str, frame_offset: int, fps: float) 
 
     # Add frame offset
     tc += frame_offset
+
+    # Apply user-specified offset (convert seconds to frames)
+    if tc_offset_seconds != 0:
+        offset_frames = int(round(tc_offset_seconds * fps))
+        tc += offset_frames
 
     # Return as string in HH:MM:SS:FF format
     return str(tc)
@@ -470,6 +478,7 @@ def process_single_xml(
     output_dir: Path,
     username: str | None = None,
     log_callback: Callable[[str], None] | None = None,
+    tc_offset_seconds: float = 0,
 ) -> bool:
     """
     Process a single Sony XML file and generate Avid markers.
@@ -479,6 +488,7 @@ def process_single_xml(
         output_dir: Directory for output file
         username: Username for markers (if None, uses XML filename without extension)
         log_callback: Optional logging function
+        tc_offset_seconds: Timecode offset in seconds (positive=forward, negative=backward)
 
     Returns:
         True if successful, False otherwise
@@ -510,6 +520,7 @@ def process_single_xml(
                     data["start_timecode"],
                     marker["frameCount"],
                     data["fps"],
+                    tc_offset_seconds,
                 )
                 color = determine_marker_color(marker["lengthValue"])
 
@@ -562,6 +573,7 @@ class SonyXMLConverter:
         username: str | None = None,
         verbose: bool = False,
         recursive: bool = False,
+        tc_offset_seconds: float = 0,
     ) -> None:
         """
         Initialize converter.
@@ -572,12 +584,14 @@ class SonyXMLConverter:
             username: Username for marker entries (if None, uses XML filename without extension)
             verbose: Enable verbose logging
             recursive: Search subdirectories recursively for XML files
+            tc_offset_seconds: Timecode offset in seconds (positive=forward, negative=backward)
         """
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.username = sanitize_username(username) if username else None
         self.verbose = verbose
         self.recursive = recursive
+        self.tc_offset_seconds = tc_offset_seconds
 
         # Setup logging
         self._setup_logging()
@@ -617,6 +631,9 @@ class SonyXMLConverter:
             self.log(f"Username: {self.username}")
         else:
             self.log("Username: [using XML filename for each file]")
+        if self.tc_offset_seconds != 0:
+            direction = "forward" if self.tc_offset_seconds > 0 else "backward"
+            self.log(f"Timecode offset: {abs(self.tc_offset_seconds)} seconds {direction}")
         self.log("=" * 60)
 
         # Find XML files
@@ -640,6 +657,7 @@ class SonyXMLConverter:
                 self.output_dir,
                 self.username,
                 self.log,
+                self.tc_offset_seconds,
             )
 
             if result:

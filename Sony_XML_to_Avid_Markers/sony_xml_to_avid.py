@@ -58,7 +58,18 @@ Examples:
     parser.add_argument('--recursive', '-r', action='store_true',
                         help='Recursively search subdirectories for XML files')
 
+    offset_group = parser.add_mutually_exclusive_group()
+    offset_group.add_argument('--offset-forward', type=float, default=0,
+                              metavar='SECONDS',
+                              help='Shift all markers forward by this many seconds')
+    offset_group.add_argument('--offset-backward', type=float, default=0,
+                              metavar='SECONDS',
+                              help='Shift all markers backward by this many seconds')
+
     args = parser.parse_args()
+
+    # Compute net timecode offset (forward is positive, backward is negative)
+    tc_offset_seconds = args.offset_forward - args.offset_backward
 
     # Validate input directory
     input_path = Path(args.input_dir)
@@ -79,7 +90,8 @@ Examples:
             output_dir=output_path,
             username=args.user,
             verbose=args.verbose,
-            recursive=args.recursive
+            recursive=args.recursive,
+            tc_offset_seconds=tc_offset_seconds
         )
 
         stats = converter.convert_all()
