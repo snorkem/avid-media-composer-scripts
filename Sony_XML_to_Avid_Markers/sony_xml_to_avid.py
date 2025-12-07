@@ -55,6 +55,8 @@ Examples:
                         help='Username for marker entries (default: XML filename without extension)')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Enable verbose logging')
+    parser.add_argument('--recursive', '-r', action='store_true',
+                        help='Recursively search subdirectories for XML files')
 
     args = parser.parse_args()
 
@@ -76,7 +78,8 @@ Examples:
             input_dir=input_path,
             output_dir=output_path,
             username=args.user,
-            verbose=args.verbose
+            verbose=args.verbose,
+            recursive=args.recursive
         )
 
         stats = converter.convert_all()

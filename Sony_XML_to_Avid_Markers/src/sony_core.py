@@ -274,7 +274,7 @@ def parse_sony_xml(
 
     Returns:
         Dict with keys:
-            - fps: Frame rate (int)
+            - fps: Frame rate (float)
             - start_timecode: Start timecode as "HH:MM:SS:FF" (str)
             - markers: List of dicts with keys:
                 - frameCount: Frame number (int)
@@ -425,28 +425,38 @@ def write_avid_markers(
 # ============================================================================
 
 def find_xml_files(
-    directory: Path, log_callback: Callable[[str], None] | None = None
+    directory: Path,
+    recursive: bool = False,
+    log_callback: Callable[[str], None] | None = None,
 ) -> list[Path]:
     """
     Find all Sony XML files in directory.
 
     Args:
         directory: Directory to search
+        recursive: If True, search subdirectories recursively
         log_callback: Optional logging function
 
     Returns:
         List of paths to XML files, sorted by filename
     """
-    # Case-insensitive search - check all files with .xml extension
-    xml_files = [f for f in directory.iterdir() if f.suffix.lower() == ".xml"]
+    # Case-insensitive search for .xml extension
+    if recursive:
+        # Use rglob for recursive search (case-insensitive via pattern)
+        xml_files = list(directory.rglob("*.[xX][mM][lL]"))
+    else:
+        # Single directory search
+        xml_files = [f for f in directory.iterdir() if f.suffix.lower() == ".xml"]
 
     if not xml_files:
         if log_callback:
-            log_callback("No XML files found in directory")
+            search_type = "recursively" if recursive else "in directory"
+            log_callback(f"No XML files found {search_type}")
         return []
 
     if log_callback:
-        log_callback(f"Found {len(xml_files)} XML files")
+        search_type = "recursively" if recursive else ""
+        log_callback(f"Found {len(xml_files)} XML files {search_type}".strip())
 
     return sorted(xml_files)
 
@@ -551,6 +561,7 @@ class SonyXMLConverter:
         output_dir: Path,
         username: str | None = None,
         verbose: bool = False,
+        recursive: bool = False,
     ) -> None:
         """
         Initialize converter.
@@ -560,11 +571,13 @@ class SonyXMLConverter:
             output_dir: Directory for output marker files
             username: Username for marker entries (if None, uses XML filename without extension)
             verbose: Enable verbose logging
+            recursive: Search subdirectories recursively for XML files
         """
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.username = sanitize_username(username) if username else None
         self.verbose = verbose
+        self.recursive = recursive
 
         # Setup logging
         self._setup_logging()
@@ -599,6 +612,7 @@ class SonyXMLConverter:
         self.log("Starting Sony XML to Avid Marker conversion")
         self.log(f"Input directory: {self.input_dir}")
         self.log(f"Output directory: {self.output_dir}")
+        self.log(f"Recursive search: {'enabled' if self.recursive else 'disabled'}")
         if self.username:
             self.log(f"Username: {self.username}")
         else:
@@ -606,7 +620,7 @@ class SonyXMLConverter:
         self.log("=" * 60)
 
         # Find XML files
-        xml_files = find_xml_files(self.input_dir, self.log)
+        xml_files = find_xml_files(self.input_dir, self.recursive, self.log)
 
         if not xml_files:
             self.log("No XML files found. Exiting.")
