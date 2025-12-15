@@ -34,33 +34,37 @@ FPS_MAP = {
 
 
 # ============================================================================
-# Hex Decoding Functions
+# Timecode Parsing Functions
 # ============================================================================
 
-def hex_to_timecode(hex_str: str) -> str:
+def parse_sony_timecode_value(tc_value: str) -> str:
     """
-    Convert Sony hex timecode to HH:MM:SS:FF string.
+    Parse Sony XML timecode value to standard HH:MM:SS:FF format.
+
+    Sony cameras store timecode as an 8-digit numeric string in reverse order:
+    The digits are arranged as FFSSMMHH, not HHMMSSFF.
 
     Args:
-        hex_str: 8-digit hex string (e.g., "20264709")
+        tc_value: 8-digit numeric string in Sony's FFSSMMHH format (e.g., "06125507")
 
     Returns:
-        Timecode string (e.g., "20:26:47:09")
+        Timecode string in standard HH:MM:SS:FF format (e.g., "07:55:12:06")
 
     Example:
-        "20264709" -> "20:26:47:09"
+        "06125507" -> "07:55:12:06"
+        (digit pairs reversed: FF=06, SS=12, MM=55, HH=07)
 
     Raises:
-        ValueError: If hex string is not 8 digits
+        ValueError: If value is not exactly 8 digits
     """
-    if len(hex_str) != 8:
-        raise ValueError(f"Invalid hex timecode length: {len(hex_str)} (expected 8)")
+    if len(tc_value) != 8:
+        raise ValueError(f"Invalid timecode value length: {len(tc_value)} (expected 8)")
 
-    # Each pair of digits is one timecode component
-    hh = hex_str[0:2]
-    mm = hex_str[2:4]
-    ss = hex_str[4:6]
-    ff = hex_str[6:8]
+    # Sony stores timecode digits in reverse order: FFSSMMHH
+    ff = tc_value[0:2]
+    ss = tc_value[2:4]
+    mm = tc_value[4:6]
+    hh = tc_value[6:8]
 
     return f"{hh}:{mm}:{ss}:{ff}"
 
@@ -343,11 +347,11 @@ def parse_sony_xml(
         if ltc_change is None:
             raise ValueError("Start LtcChange not found")
 
-        start_tc_hex = ltc_change.attrib.get("value")
-        if start_tc_hex is None:
+        start_tc_value = ltc_change.attrib.get("value")
+        if start_tc_value is None:
             raise ValueError("Missing 'value' attribute in start LtcChange element")
 
-        start_timecode = hex_to_timecode(start_tc_hex)
+        start_timecode = parse_sony_timecode_value(start_tc_value)
 
         # Extract markers
         markers = []
