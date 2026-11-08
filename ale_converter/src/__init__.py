@@ -5,4 +5,4 @@ This package contains the core functionality for converting and merging ALE file
 with metadata from CSV/Excel databases.
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"

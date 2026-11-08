@@ -106,18 +106,11 @@ class IDExtractor:
         if position is None:
             position = 1
 
-        # Split the name by delimiter
-        max_splits = position + 1
-        id_prep = pd.DataFrame(
-            df_result["Name"].str.split(delimiter, n=max_splits, expand=True).values,
-            columns=[f'col{i}' for i in range(max_splits + 1)]
-        )
+        # Take the requested component of each split name. Names with fewer
+        # components yield None (str.get), so short names can't break the split.
+        arc_id = df_result["Name"].str.split(delimiter, regex=False).str.get(position)
 
-        # Use the specified component as the ARC_ID
-        col_name = f'col{position}'
-        if col_name in id_prep.columns:
-            arc_id = id_prep[col_name]
-        else:
+        if arc_id.isna().all():
             # Fall back to using the full name
             if verbose:
                 print(f"Warning: Position {position} not available in split names. Using full name.")

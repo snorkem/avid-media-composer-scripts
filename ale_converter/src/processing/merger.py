@@ -49,16 +49,33 @@ class DataMerger:
         if 'ARC_ID' not in df_db.columns:
             raise ValueError("Database DataFrame must have 'ARC_ID' column")
 
-        # Select columns to merge from ALE
+        # Select columns to merge from ALE (default: keep every ALE column)
         if ale_columns is None:
-            ale_columns = ['ARC_ID', 'Name', 'Start', 'End', 'Tape', 'Source File']
-
-        # Filter to only existing columns
-        selected_ale_columns = [col for col in ale_columns if col in df_ale.columns]
+            selected_ale_columns = list(df_ale.columns)
+        else:
+            if 'ARC_ID' not in ale_columns:
+                ale_columns = ['ARC_ID'] + list(ale_columns)
+            selected_ale_columns = [col for col in ale_columns if col in df_ale.columns]
 
         if verbose:
             print(f"ALE columns for merge: {selected_ale_columns}")
             print(f"Database columns: {len(df_db.columns)}")
+
+        # Blank IDs must never match, and each ID may match only one database
+        # row; otherwise a left join emits one copy of the clip per match.
+        db_ids = df_db['ARC_ID'].fillna('').astype(str).str.strip()
+        df_db = df_db[db_ids != ''].copy()
+        df_db['ARC_ID'] = db_ids[db_ids != '']
+
+        duplicated = df_db['ARC_ID'].duplicated(keep='first')
+        if duplicated.any():
+            dup_ids = sorted(df_db.loc[duplicated, 'ARC_ID'].unique())
+            print(
+                f"Warning: {len(dup_ids)} database ID(s) appear more than once; "
+                f"using the first row for each: {dup_ids[:10]}"
+                + (" ..." if len(dup_ids) > 10 else "")
+            )
+            df_db = df_db[~duplicated]
 
         # Perform the merge
         df_merged = df_ale[selected_ale_columns].merge(

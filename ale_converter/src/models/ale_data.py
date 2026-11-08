@@ -43,7 +43,7 @@ class ALEHeader:
         lines.append(f"FIELD_DELIM\t{self.field_delim}")
         lines.append(f"VIDEO_FORMAT\t{self.video_format}")
         lines.append(f"AUDIO_FORMAT\t{self.audio_format}")
-        lines.append(f"FPS\t{self.fps}")
+        lines.append(f"FPS\t{self.fps:g}")  # 25.0 -> "25", 23.976 stays
 
         # Add any custom fields
         for key, value in self.custom_fields.items():

@@ -68,41 +68,41 @@ class ALEWriter:
         # Get header section
         header_section = ale_data.header.to_string()
 
-        # Convert data to tab-separated format
-        csv_content = ale_data.data.to_csv(sep='\t', index=False)
-
-        # Extract column names and data rows
-        csv_header, csv_data = csv_content.split('\n', 1)
+        # ALE is plain tab-delimited text with no quoting, so write fields
+        # verbatim instead of going through CSV quoting and undoing it.
+        df = ale_data.data.fillna('')
+        column_line = '\t'.join(ALEWriter._format_field(col) for col in df.columns)
+        data_lines = [
+            '\t'.join(ALEWriter._format_field(value) for value in row)
+            for row in df.itertuples(index=False, name=None)
+        ]
 
         # Format the column section
-        column_section = "Column\n" + csv_header
+        column_section = "Column\n" + column_line
 
-        # Clean up formatting issues in data
-        csv_data = ALEWriter._clean_data_formatting(csv_data)
+        data_section = ''.join(line + '\n' for line in data_lines)
 
         # Assemble the complete ALE file
-        ale_content = header_section + "\n\n" + column_section + "\n\nData\n" + csv_data
+        ale_content = header_section + "\n\n" + column_section + "\n\nData\n" + data_section
 
         return ale_content
 
     @staticmethod
-    def _clean_data_formatting(data: str) -> str:
+    def _format_field(value) -> str:
         """
-        Clean up formatting issues in the data section.
+        Convert a value to a single ALE field.
+
+        Tabs and line breaks would split the field or the row, so they are
+        replaced with spaces. All other characters, quotes included, are kept.
 
         Args:
-            data: Raw data section string
+            value: Cell value
 
         Returns:
-            Cleaned data section string
+            Field text safe for a tab-delimited ALE row
         """
-        # Remove problematic quote patterns
-        data = data.replace('\"\"\"', '')  # Remove triple double quotes
-        data = data.replace('\"\"', '\"')  # Remove double double quotes
-        data = data.replace('\t\"', '\t')  # Remove leading double quotes
-        data = data.replace('\"\t', '\t')  # Remove trailing double quotes
-
-        return data
+        text = str(value)
+        return text.replace('\t', ' ').replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
 
     @staticmethod
     def preview_content(ale_data: ALEData, num_lines: int = 20) -> str:

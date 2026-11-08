@@ -82,13 +82,21 @@ class SpreadsheetReader:
         Returns:
             DataFrame with the Excel data
         """
+        # Legacy .xls needs xlrd; .xlsx/.xlsm need openpyxl
+        if file_path.suffix.lower() == '.xls':
+            engine = 'xlrd'
+        else:
+            engine = 'openpyxl'
         try:
-            import openpyxl
+            __import__(engine)
         except ImportError:
-            raise ImportError("Excel support requires openpyxl. Install with: pip install openpyxl")
+            raise ImportError(
+                f"Reading {file_path.suffix} files requires {engine}. "
+                f"Install with: pip install {engine}"
+            )
 
         # Get available sheets
-        xl = pd.ExcelFile(file_path)
+        xl = pd.ExcelFile(file_path, engine=engine)
         sheet_names = xl.sheet_names
 
         # Determine which sheet to read
@@ -112,7 +120,7 @@ class SpreadsheetReader:
             if verbose and len(sheet_names) > 1:
                 print(f"Found {len(sheet_names)} sheets. Using first: '{target_sheet}'")
 
-        return pd.read_excel(file_path, sheet_name=target_sheet, dtype=str)
+        return pd.read_excel(xl, sheet_name=target_sheet, dtype=str)
 
     @staticmethod
     def list_excel_sheets(file_path: Path) -> list:
@@ -258,9 +266,9 @@ class SpreadsheetWriter:
         # Fill NaN values
         df.fillna('', inplace=True)
 
-        # Add null row (required for ALE format)
-        null_row = pd.DataFrame([["null"] * len(df.columns)], columns=df.columns)
-        df = pd.concat([df, null_row], ignore_index=True)
+        # Drop fully blank rows. A CSV exported from an older ALE that ended
+        # in an all-"null" row comes back blank (pandas reads "null" as NaN).
+        df = df[(df.astype(str).apply(lambda col: col.str.strip()) != '').any(axis=1)]
 
         # Get or create header
         if template_ale_path and template_ale_path.exists():

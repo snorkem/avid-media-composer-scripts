@@ -22,7 +22,7 @@ from PyQt5.QtGui import QIcon, QFont, QColor, QPalette
 
 # Import the ALEConverter class from the ale_converter.py module
 try:
-    from ale_converter import ALEConverter
+    from ale_converter import ALEConverter, ColumnMapper
 except ImportError:
     # If the script is run from a different directory, try to find the module
     # Get the directory of the current script
@@ -30,11 +30,13 @@ except ImportError:
     # Add the directory to the Python path
     sys.path.append(script_dir)
     try:
-        from ale_converter import ALEConverter
+        from ale_converter import ALEConverter, ColumnMapper
     except ImportError:
         print("Error: Could not import ALEConverter from ale_converter.py")
         print("Make sure the script is in the same directory as ale_converter.py")
         sys.exit(1)
+
+from src import __version__
 
 # Valid FPS values as defined in the original script
 VALID_FPS_VALUES = [23.976, 29.97, 59.94, 24, 25, 30, 60, 119.88, 120]
@@ -85,21 +87,28 @@ class ConverterWorker(QThread):
                 # Get parameters
                 id_position = self.args.get('id_position')
                 custom_mappings = self.args.get('custom_mappings')
+                column_mapper = None
+                if custom_mappings:
+                    column_mapper = ColumnMapper(
+                        columns_to_drop=custom_mappings.get('columns_to_drop'),
+                        columns_to_rename=custom_mappings.get('columns_to_rename')
+                    )
 
                 # Run the conversion using the new refactored API
                 output_path = self.converter.convert_with_merge(
+                    column_mapper=column_mapper,
                     id_position=id_position,
-                    column_mapping_config=custom_mappings
+                    fps=self.args.get('fps')
                 )
 
                 self.finished.emit(True, f"Conversion complete. Output file: {output_path}")
                 
             elif self.command == 'export':
                 output_path = ALEConverter.export_ale_to_spreadsheet(
-                    self.args.get('ale_path'),
-                    self.args.get('output_path'),
-                    self.args.get('format', 'csv'),  # Note: parameter name in API is 'output_format'
-                    self.args.get('fps', 23.976),
+                    ale_path=self.args.get('ale_path'),
+                    output_path=self.args.get('output_path'),
+                    output_format=self.args.get('format', 'csv'),
+                    fps=self.args.get('fps', 23.976),
                     verbose=True
                 )
                 
@@ -110,10 +119,11 @@ class ConverterWorker(QThread):
                     
             elif self.command == 'convert':
                 output_path = ALEConverter.convert_spreadsheet_to_ale(
-                    self.args.get('spreadsheet_path'),
-                    self.args.get('output_path'),
-                    self.args.get('template_path'),
-                    self.args.get('fps')
+                    spreadsheet_path=self.args.get('spreadsheet_path'),
+                    output_path=self.args.get('output_path'),
+                    template_ale_path=self.args.get('template_path'),
+                    fps=self.args.get('fps'),
+                    verbose=True
                 )
                 
                 if output_path:
@@ -226,7 +236,7 @@ class ColumnMapDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ALE Converter GUI")
+        self.setWindowTitle(f"ALE Converter GUI v{__version__}")
         self.setMinimumWidth(800)
         self.setMinimumHeight(600)
         
@@ -956,6 +966,7 @@ class MainWindow(QMainWindow):
             self, 
             "About ALE Converter GUI",
             "<h3>ALE Converter GUI</h3>"
+            f"<p>Version {__version__}</p>"
             "<p>A graphical interface for the ALE Converter script.</p>"
             "<p>This application provides a user-friendly way to:</p>"
             "<ul>"

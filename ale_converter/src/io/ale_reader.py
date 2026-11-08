@@ -145,10 +145,17 @@ class ALEReader:
         # Parse data rows (everything after "Data" line)
         data_rows = []
         for line in lines[data_line_idx + 1:]:
-            line = line.strip()
-            if line and line != 'null':
+            # Strip only the line ending: a leading tab is an empty first field,
+            # and stripping it would shift every value one column left.
+            line = line.rstrip('\r\n')
+            if line.strip():
                 # Split by tab and clean up
                 values = line.split('\t')
+                # Skip "null" filler rows (all fields "null" or empty) that
+                # older versions of `convert` appended; they are not clips.
+                stripped = [v.strip() for v in values]
+                if 'null' in stripped and all(v in ('null', '') for v in stripped):
+                    continue
                 # Ensure we have the right number of columns
                 while len(values) < len(columns):
                     values.append('')

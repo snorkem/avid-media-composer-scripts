@@ -61,7 +61,8 @@ class ALEConverter:
     def convert_with_merge(
         self,
         column_mapper: Optional[ColumnMapper] = None,
-        id_position: Optional[int] = None
+        id_position: Optional[int] = None,
+        fps: Optional[float] = None
     ) -> str:
         """
         Run the complete merge conversion process.
@@ -69,6 +70,8 @@ class ALEConverter:
         Args:
             column_mapper: Optional ColumnMapper for custom column configuration
             id_position: Optional position for manual ID extraction
+            fps: Optional FPS to write to the output header. If None, the
+                source ALE's FPS is kept.
 
         Returns:
             Path to the created ALE file
@@ -78,6 +81,13 @@ class ALEConverter:
         """
         if not self.ale_path or not self.db_path:
             raise ValueError("Both ale_path and db_path must be set")
+
+        if fps is not None:
+            is_valid, message = FPSValidator.validate_fps(fps, strict=False)
+            if not is_valid:
+                raise ValueError(message)
+            elif message and self.verbose:
+                print(message)
 
         # Validate input files
         is_valid, error = FileValidator.validate_ale_file(self.ale_path)
@@ -139,6 +149,8 @@ class ALEConverter:
 
         # Update ale_data with merged output
         ale_data.data = output_df
+        if fps is not None:
+            ale_data.header.fps = fps
 
         # Write output
         return ALEWriter.write_file(ale_data, self.output_path, verbose=self.verbose)
@@ -171,6 +183,10 @@ class ALEConverter:
         elif message:  # Warning
             if verbose:
                 print(message)
+
+        # Accept str paths (the GUI passes QLineEdit text); treat '' as unset
+        ale_path = Path(ale_path)
+        output_path = Path(output_path) if output_path else None
 
         # Read ALE file
         ale_data = ALEReader.read_file(ale_path, verbose=verbose)
@@ -219,6 +235,11 @@ class ALEConverter:
             if verbose:
                 print(message)
 
+        # Accept str paths (the GUI passes QLineEdit text); treat '' as unset
+        spreadsheet_path = Path(spreadsheet_path)
+        output_path = Path(output_path) if output_path else None
+        template_ale_path = Path(template_ale_path) if template_ale_path else None
+
         # Determine output path
         if output_path is None:
             output_path = spreadsheet_path.with_suffix('.ale')
@@ -248,8 +269,8 @@ def parse_arguments():
     merge_parser.add_argument('--db', required=True, help='Path to the database CSV/Excel file')
     merge_parser.add_argument('--output', help='Path for the output ALE file')
     merge_parser.add_argument(
-        '--fps', type=float, choices=valid_fps_values, default=23.976,
-        help='Frames per second setting (default: 23.976)'
+        '--fps', type=float, choices=valid_fps_values, default=None,
+        help='Override the output FPS (default: keep the source ALE\'s FPS)'
     )
     merge_parser.add_argument('--custom-columns', help='Path to JSON file with custom column mappings')
     merge_parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose debug output')
@@ -311,7 +332,8 @@ def run_merge_command(args):
         # Run conversion
         output_path = converter.convert_with_merge(
             column_mapper=column_mapper,
-            id_position=id_position
+            id_position=id_position,
+            fps=args.fps
         )
 
         print(f"\nConversion complete. Output file: {output_path}")
@@ -342,7 +364,7 @@ def main():
             output_path = ALEConverter.export_ale_to_spreadsheet(
                 ale_path=Path(args.ale),
                 output_path=Path(args.output) if args.output else None,
-                format=args.format,
+                output_format=args.format,
                 fps=args.fps,
                 verbose=getattr(args, 'verbose', False)
             )
