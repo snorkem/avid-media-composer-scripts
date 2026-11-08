@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (
     QFrame
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QSettings
-from PyQt5.QtGui import QIcon, QFont, QColor, QPalette
+from PyQt5.QtGui import QIcon, QFont, QColor, QPalette, QFontDatabase
 
 # Import the ALEConverter class from the ale_converter.py module
 try:
@@ -899,6 +899,21 @@ class MainWindow(QMainWindow):
         }
         self.worker.start()
 
+    def validate_export_inputs(self):
+        """Validate inputs for export operation"""
+        ale_path = self.export_ale_path_edit.text()
+        if not ale_path:
+            QMessageBox.warning(self, "Input Error", "Please select an ALE file.")
+            return False
+
+        if not os.path.exists(ale_path):
+            QMessageBox.warning(self, "Input Error", f"ALE file not found: {ale_path}")
+            return False
+
+        # Output path is optional: the converter defaults to the ALE's name
+        # with a .csv/.xlsx extension.
+        return True
+
     def validate_convert_inputs(self, preview=False):
         """Validate inputs for convert operation"""
         # Check required files
@@ -1701,9 +1716,11 @@ def main():
             padding: 4px 15px;
         }
         QTextEdit {
-            font-family: monospace;
+            font-family: "%s";
         }
-    """)
+    """ % QFontDatabase.systemFont(QFontDatabase.FixedFont).family())
+    # The generic "monospace" alias doesn't exist on macOS; the system's
+    # fixed-width font (e.g. Menlo) avoids Qt's slow font-alias fallback.
     
     # Create and show the main window
     window = MainWindow()
