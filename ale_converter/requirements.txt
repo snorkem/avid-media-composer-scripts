@@ -1,0 +1,4 @@
+pandas>=1.4
+openpyxl>=3.0   # .xlsx / .xlsm read and Excel export
+xlrd>=2.0       # legacy .xls read
+PyQt5>=5.15     # GUI only (ale-converter-gui.py)
