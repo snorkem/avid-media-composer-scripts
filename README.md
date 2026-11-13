@@ -7,6 +7,7 @@ Tools that turn third-party metadata into files Avid Media Composer can import.
 | [Sony XML to Avid Markers](#sony-xml-to-avid-markers) | Converts Sony camera XML shot marks into Avid marker files | CLI |
 | [MediaSilo to Avid Markers](#mediasilo-to-avid-markers) | Converts a MediaSilo review-comment CSV export into an Avid marker file | CLI, GUI |
 | [ALE Converter](#ale-converter) | Merges database metadata into Avid ALE files, and converts ALEs to and from spreadsheets | CLI, GUI |
+| [DOCX Transcripts to Avid Scripts](#docx-transcripts-to-avid-scripts) | Converts a folder of Word transcripts into Avid script files (.avc), using [pyavc](https://github.com/lawson-tanner/pyavc) | CLI |
 
 Each tool lives in its own folder and works on its own.
 
@@ -20,6 +21,7 @@ Each tool lives in its own folder and works on its own.
 | Sony XML to Avid Markers | `timecode` (`Sony_XML_to_Avid_Markers/requirements.txt`) |
 | MediaSilo to Avid Markers | `pandas`, plus `PyQt5` for the GUI |
 | ALE Converter | `pandas`, `openpyxl`, `xlrd`, plus `PyQt5` for the GUI (`ale_converter/requirements.txt`) |
+| DOCX Transcripts to Avid Scripts | `pyavc`, `python-docx` (`pyavc_scripts/requirements.txt`) |
 
 A virtual environment is the easiest way to set this up, especially with a Homebrew-managed Python:
 
@@ -32,7 +34,7 @@ source .venv/bin/activate
 ```
 
 ```bash
-pip install -r Sony_XML_to_Avid_Markers/requirements.txt -r ale_converter/requirements.txt
+pip install -r Sony_XML_to_Avid_Markers/requirements.txt -r ale_converter/requirements.txt -r pyavc_scripts/requirements.txt
 ```
 
 ## Running the tools
@@ -164,6 +166,63 @@ python ale_converter/ale_converter.py convert --spreadsheet CLIPS.csv --fps 23.9
 - **Text cleaning for Avid.** It fixes the characters that make Avid reject an ALE or show bad data, such as curly quotes, line breaks, tabs, and fields that are too long.
 - **Safe round trips.** Exporting an ALE to CSV and converting it back keeps every column and value. You can edit metadata in a spreadsheet and send it back to Avid without losing data.
 - **Runs locally.** Database exports and clip metadata never leave your machine. There are no conversion limits, and it can be scripted into a larger pipeline.
+
+## DOCX Transcripts to Avid Scripts
+
+Converts every Word transcript (`.docx`) in a folder into an Avid Media Composer script file (`.avc`). The .avc files are written by [pyavc](https://github.com/lawson-tanner/pyavc) by Lawson Tanner. See [Credits and licensing](#credits-and-licensing).
+
+```bash
+python pyavc_scripts/docx_to_avid_script.py /path/to/transcripts
+```
+
+The scripts are saved to an `avid_scripts` subfolder inside the input folder, one `.avc` per transcript with the same name.
+
+- Paragraphs and table rows are read in document order. Each table row becomes one line, with its cells separated by spaces.
+- Curly quotes, dashes, ellipses, and non-breaking spaces are turned into plain ASCII by default.
+- Lines longer than `--text-width` characters are split into several lines.
+- Word lock files (`~$...`) are ignored. Empty documents are skipped with a warning.
+- The script exits with status 1 if any file fails to convert.
+
+| Option | Description |
+|---|---|
+| `-o`, `--output DIR` | Output folder (default: `avid_scripts` inside the input folder) |
+| `-r`, `--recursive` | Also convert transcripts in subfolders, keeping the folder structure |
+| `--if-exists skip\|overwrite\|rename` | What to do when the .avc already exists (default: `skip`). `rename` writes `Name(1).avc` |
+| `--keep-unicode` | Keep typographic punctuation instead of converting it to ASCII |
+| `--no-tables` | Ignore text in Word tables |
+| `-v`, `--verbose` | Show detailed logging |
+
+Script formatting options match Media Composer's Script settings, and you can change all of them later in Avid:
+
+| Option | Default |
+|---|---|
+| `-t`, `--text-width N`: characters per line | 80 |
+| `-f`, `--font-size PX` | 12 |
+| `--font NAME` | Open Sans |
+| `--white-bg` / `--no-white-bg` | off (uses Avid's setting) |
+| `--row-colors` / `--no-row-colors` | on |
+| `--left-margin PX` | 40 |
+| `--text-width-px PX` (128–5120, display only) | 512 |
+| `--frames` / `--no-frames`: slate thumbnail | on |
+| `--interpolate-position` / `--no-interpolate-position` | off |
+| `--all-takes` / `--no-all-takes` | on |
+| `--line-numbers` / `--no-line-numbers` | on |
+| `--word-wrap` / `--no-word-wrap` | on |
+| `--hold-slates` / `--no-hold-slates` | off |
+| `--take-color N` (1–22, [palette](https://github.com/lawson-tanner/pyavc#take_color-palette)) | 1 |
+
+### Unique Features
+
+- **Whole folders at once.** pyavc's own command converts one file at a time. This tool converts a folder, optionally with its subfolders, and reports a summary.
+- **Reads transcript tables.** Some transcription services put timecode, speaker, and dialogue in Word tables. This tool includes table text, where pyavc's DOCX reader only reads paragraphs.
+- **Safe re-runs.** Existing scripts are skipped by default, or overwritten or numbered on request. Each file is built in a temporary folder and moved into place, so a failed conversion never leaves a partial file.
+- **Checked options.** Formatting values are checked against pyavc's limits before anything is converted.
+
+### Credits and licensing
+
+The .avc files are written by **[pyavc](https://github.com/lawson-tanner/pyavc)**, created by **Lawson Tanner** and licensed under the GNU General Public License v3.0. pyavc is installed from PyPI as a dependency, not bundled. pyavc is not affiliated with Avid, and neither is this project.
+
+Because this tool is built on pyavc, the `pyavc_scripts/` folder is released under **GPL-3.0** ([`pyavc_scripts/LICENSE`](pyavc_scripts/LICENSE)). See [`pyavc_scripts/NOTICE.md`](pyavc_scripts/NOTICE.md) for full credits.
 
 ## Avid marker file format
 
