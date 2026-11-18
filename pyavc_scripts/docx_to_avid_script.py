@@ -56,8 +56,12 @@ PYAVC_CREDIT = ("Avid script files are generated with pyavc by Lawson Tanner "
                 "(https://github.com/lawson-tanner/pyavc), licensed under GPL-3.0.")
 
 DEFAULT_SUBFOLDER = "avid_scripts"
-# pyavc cuts output file names to 56 characters (before the extension).
-AVC_NAME_LIMIT = 56
+# Avid script file names can be at most 64 characters, counting the ".avc"
+# extension. The limit is also applied to the name's UTF-8 byte length, so
+# names with accented or other non-ASCII characters stay within it too.
+AVID_NAME_LIMIT = 64
+AVC_EXTENSION = ".avc"
+FALLBACK_STEM = "transcript"
 
 # Typographic characters that Word inserts automatically, mapped to plain
 # ASCII so the script reads the same in every Avid version and font.
@@ -153,37 +157,91 @@ def clean_lines(lines: list[str], ascii_punctuation: bool = True) -> list[str]:
 # Conversion
 # ---------------------------------------------------------------------------
 
-def output_base_name(docx_path: Path) -> str:
-    """The output file name without extension, as pyavc would shorten it."""
-    return docx_path.stem.rstrip()[:AVC_NAME_LIMIT]
+def name_length(name: str) -> int:
+    """Length of a file name for Avid's limit: characters or UTF-8 bytes, whichever is more."""
+    return max(len(name), len(name.encode("utf-8")))
 
 
-def numbered_path(directory: Path, base_name: str) -> Path:
-    """Return the first free '<name>(n).avc' path, using pyavc's naming style."""
+def check_avc_name(name: str) -> None:
+    """Refuse any output name over Avid's limit. Last check before a file is written."""
+    if name_length(name) > AVID_NAME_LIMIT:
+        raise ValueError(f"output name '{name}' is longer than Avid's "
+                         f"{AVID_NAME_LIMIT}-character limit for script files")
+
+
+def avc_file_name(stem: str, suffix: str = "") -> str:
+    """Build '<stem><suffix>.avc', shortening the stem so the name fits Avid's limit.
+
+    The suffix (such as "(1)") and the extension are always kept whole.
+    """
+    tail = f"{suffix}{AVC_EXTENSION}"
+    stem = stem.strip() or FALLBACK_STEM
+    while name_length(stem + tail) > AVID_NAME_LIMIT:
+        stem = stem[:-1]
+    # Trailing spaces and dots left by shortening cause trouble on Windows.
+    stem = stem.rstrip(" .") or FALLBACK_STEM
+    name = stem + tail
+    check_avc_name(name)
+    return name
+
+
+def path_key(path: Path) -> str:
+    """Compare paths case-insensitively, as macOS and Windows file systems do."""
+    return str(path).casefold()
+
+
+def plan_targets(transcripts: list[Path], input_dir: Path, output_dir: Path) -> dict[Path, Path]:
+    """Choose an output path for every transcript before anything is written.
+
+    Long names are shortened to fit Avid's limit. When two transcripts end up
+    with the same output name, the later one (in sorted order) gets a number,
+    e.g. 'Name(1).avc'. Names depend only on the input files, so re-running on
+    the same folder gives the same names.
+    """
+    planned: dict[Path, Path] = {}
+    taken: set[str] = set()
+    for docx_path in transcripts:
+        target_dir = output_dir / docx_path.relative_to(input_dir).parent
+        target = target_dir / avc_file_name(docx_path.stem)
+        count = 0
+        while path_key(target) in taken:
+            count += 1
+            target = target_dir / avc_file_name(docx_path.stem, f"({count})")
+        taken.add(path_key(target))
+        planned[docx_path] = target
+    return planned
+
+
+def numbered_path(target: Path, stem: str, reserved: set[str]) -> Path:
+    """Return the first '<stem>(n).avc' next to target that is unused on disk and not reserved."""
     count = 1
     while True:
-        suffix = f"({count})"
-        candidate = directory / f"{base_name[:AVC_NAME_LIMIT - len(suffix)]}{suffix}.avc"
-        if not candidate.exists():
+        candidate = target.with_name(avc_file_name(stem, f"({count})"))
+        if not candidate.exists() and path_key(candidate) not in reserved:
             return candidate
         count += 1
 
 
-def convert_transcript(docx_path: Path, target_dir: Path, script_format: ScriptFormat,
+def convert_transcript(docx_path: Path, target: Path, script_format: ScriptFormat,
                        if_exists: str = "skip", ascii_punctuation: bool = True,
-                       include_tables: bool = True) -> Path | None:
-    """Convert one DOCX file to an .avc file in target_dir.
+                       include_tables: bool = True,
+                       reserved: set[str] | None = None) -> Path | None:
+    """Convert one DOCX file to the .avc file at target.
 
+    reserved holds the planned output paths of the other transcripts in this
+    run (see path_key), so --if-exists rename never takes one of their names.
     Returns the path written, or None if the file was skipped because the
     output already exists.
     """
-    base_name = output_base_name(docx_path)
-    target = target_dir / f"{base_name}.avc"
+    reserved = set() if reserved is None else reserved
     if target.exists():
         if if_exists == "skip":
             return None
         if if_exists == "rename":
-            target = numbered_path(target_dir, base_name)
+            target = numbered_path(target, docx_path.stem, reserved)
+            reserved.add(path_key(target))
+    check_avc_name(target.name)
+    target_dir = target.parent
 
     lines = clean_lines(extract_lines(docx_path, include_tables), ascii_punctuation)
     if not any(line.strip() for line in lines):
@@ -196,7 +254,8 @@ def convert_transcript(docx_path: Path, target_dir: Path, script_format: ScriptF
         tmp_dir = Path(tmp)
         source_txt = tmp_dir / "transcript.txt"
         source_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        avc_file = AVCFile(str(source_txt), str(tmp_dir), base_name, **asdict(script_format))
+        # pyavc writes "script.avc" in the temp folder; the real name is set by the move below.
+        avc_file = AVCFile(str(source_txt), str(tmp_dir), "script", **asdict(script_format))
         with contextlib.redirect_stdout(io.StringIO()):  # pyavc prints on success
             created = Path(avc_file.create())
         created.replace(target)
@@ -332,16 +391,23 @@ def main(argv: list[str] | None = None) -> int:
 
     logger.info("Converting %d transcript(s) to %s", len(transcripts), output_dir)
     logger.debug(PYAVC_CREDIT)
+    planned = plan_targets(transcripts, input_dir, output_dir)
+    reserved = {path_key(target) for target in planned.values()}
     converted = skipped = failed = 0
     for docx_path in transcripts:
         relative = docx_path.relative_to(input_dir)
-        target_dir = output_dir / relative.parent
+        target = planned[docx_path]
+        if target.stem != docx_path.stem.strip():
+            logger.warning("%s: output named '%s' (Avid script names are limited to %d "
+                           "characters, and duplicate names are numbered)",
+                           relative, target.name, AVID_NAME_LIMIT)
         try:
             result = convert_transcript(
-                docx_path, target_dir, script_format,
+                docx_path, target, script_format,
                 if_exists=args.if_exists,
                 ascii_punctuation=not args.keep_unicode,
                 include_tables=not args.no_tables,
+                reserved=reserved,
             )
         except EmptyTranscriptError:
             skipped += 1

@@ -177,6 +177,8 @@ python pyavc_scripts/docx_to_avid_script.py /path/to/transcripts
 
 The scripts are saved to an `avid_scripts` subfolder inside the input folder, one `.avc` per transcript with the same name.
 
+Avid script file names can be at most 64 characters, including `.avc`. Longer names are shortened to fit, and the limit is also applied to the name's UTF-8 byte length so accented names fit too. If two transcripts end up with the same name, the later one in alphabetical order gets a number, e.g. `Name(1).avc`. A warning is printed for every renamed file, and no file over the limit is ever written.
+
 - Paragraphs and table rows are read in document order. Each table row becomes one line, with its cells separated by spaces.
 - Curly quotes, dashes, ellipses, and non-breaking spaces are turned into plain ASCII by default.
 - Lines longer than `--text-width` characters are split into several lines.
